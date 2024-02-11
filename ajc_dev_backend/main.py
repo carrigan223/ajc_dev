@@ -4,12 +4,13 @@ import sqlalchemy
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from dotenv import load_dotenv
+from dotenv import load
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
+load()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+print(DATABASE_URL)
 
 database = databases.Database(DATABASE_URL)
 
@@ -24,10 +25,12 @@ notes = sqlalchemy.Table(
     sqlalchemy.Column("created_at", sqlalchemy.DateTime),
     sqlalchemy.Column("updated_at", sqlalchemy.DateTime),
 )
+print(notes)
 
 engine = sqlalchemy.create_engine(
     DATABASE_URL
 )
+
 # look into this deeper
 # metadata.create_all(engine)
 
@@ -39,7 +42,7 @@ class Note(BaseModel):
     id: int
     title: str
     description: str
-    created_at: str
+    created_at: str 
     updated_at: str
 
 
@@ -68,16 +71,55 @@ async def shutdown():
     await database.disconnect()
     
 @app.post("/notes/", response_model=Note)
-async def create_note(note):
-    print(note)
-    # query = notes.insert().values(title=note.title, description=note.description)
-    # last_record_id = await database.execute(query)
-    # return {**note.dict(), "id": last_record_id}
+async def create_note(note: NoteIn):
+    pass
+    try:
+        #Generating the query
+        query = notes.insert().values(
+            title=note.title,
+            description=note.description,
+        )
+        # Keep in mind that the execute method returns the ID of the created record
+        record_id = await database.execute(query)
+        #retrieving the created note
+        created_note_query =  notes.select().where(notes.c.id == record_id)
+        created_note = await database.fetch_one(created_note_query)
+        
+        print(created_note)
+        return {
+            **created_note.model_dump(),
+        }
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
-@app.get("/notes/", response_model=List[Note])
+@app.get("/notes/")
 async def read_notes(skip: int = 0, take: int = 20):
-    query = notes.select().offset(skip).limit(take)
-    return await database.fetch_all(query)
+    query = notes.select()
+    notes_to_change = await database.fetch_all(query)
+    # notes to change convert to dict()
+    notes_to_change = [dict(note) for note in notes_to_change]
+    return  {"notes": notes_to_change, "total": len(notes_to_change)}
+
+@app.get("/notes/{note_id}")
+async def read_note(note_id: int):
+    query = notes.select().where(notes.c.id == note_id)
+    return await database.fetch_one(query)
+
+@app.put("/notes/{note_id}")
+async def update_note(note_id: int, note: NoteIn):
+    query = notes.update().where(notes.c.id == note_id).values(
+        title=note.title,
+        description=note.description
+    )
+    await database.execute(query)
+    return {**note.dict(), "id": note_id}
+
+@app.delete("/notes/{note_id}")
+async def delete_note(note_id: int):
+    query = notes.delete().where(notes.c.id == note_id)
+    await database.execute(query)
+    return {"message": "Note with id: {} deleted successfully!".format(note_id)}
 
 @app.get("/")
 def read_root():
